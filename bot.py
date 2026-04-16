@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from openpyxl import Workbook, load_workbook
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputFile
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -12,12 +12,16 @@ CHANNEL_USERNAME = "@Alcozer_rnd"
 CHANNEL_ID = "@Alcozer_rnd"
 PRIVACY_POLICY_URL = "https://alcozerjewelry.ru/info/policy/"
 
+# ⚠️ ВСТАВЬ СВОЙ TELEGRAM ID ВМЕСТО 123456789!
+# Узнать ID можно у бота @userinfobot
+ADMIN_ID = 1208006095  # ЗАМЕНИ НА СВОЙ ID!
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 EXCEL_FILE = os.path.join(os.path.dirname(__file__), "users_data.xlsx")
 
-# Состояния для ConversationHandler (теперь их только 2)
+# Состояния для ConversationHandler
 WAITING_FOR_FULL_NAME = 1
 WAITING_FOR_PHONE = 2
 
@@ -46,6 +50,14 @@ def save_user_data(user_id: int, username: str, full_name: str, phone: str):
     ws.append([user_id, username, full_name, phone, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
     wb.save(EXCEL_FILE)
     print(f"✅ Сохранён пользователь {user_id}: {full_name}, {phone}")
+    
+    # Отправляем уведомление админу о новой активации
+    try:
+        # Этот код требует настройки, но пока закомментирован
+        # await context.bot.send_message(chat_id=ADMIN_ID, text=f"🎉 Новая активация!\n👤 {full_name}\n📞 {phone}")
+        pass
+    except:
+        pass
 
 def validate_phone(phone: str) -> bool:
     """Проверяет корректность номера телефона"""
@@ -115,7 +127,8 @@ async def agree(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "📋 Пожалуйста, введите ваши ИМЯ и ФАМИЛИЮ одним сообщением:\n\n"
         "Пример: Анна Иванова\n\n"
-        
+        "Или: Анна\n\n"
+        "(если напишете только имя, фамилия останется пустой)"
     )
     
     return WAITING_FOR_FULL_NAME
@@ -308,6 +321,69 @@ async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     print(f"🎉 Сертификат активирован для {user.id}")
 
+async def get_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет админу Excel-файл с данными пользователей"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    try:
+        if Path(EXCEL_FILE).exists():
+            with open(EXCEL_FILE, 'rb') as file:
+                await update.message.reply_document(
+                    document=InputFile(file, filename="users_data.xlsx"),
+                    caption="📊 Вот таблица с данными пользователей, активировавших сертификаты."
+                )
+        else:
+            await update.message.reply_text("❌ Файл с данными ещё не создан.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка при отправке файла: {e}")
+
+async def view_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает последние активации из таблицы (без скачивания)"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ У вас нет доступа к этой команде.")
+        return
+    
+    try:
+        if not Path(EXCEL_FILE).exists():
+            await update.message.reply_text("❌ Файл с данными ещё не создан.")
+            return
+        
+        wb = load_workbook(EXCEL_FILE)
+        ws = wb.active
+        
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) <= 1:
+            await update.message.reply_text("📊 Таблица пока пуста. Никто ещё не активировал сертификат.")
+            return
+        
+        # Берём последние 5 записей (без учёта заголовка)
+        last_entries = rows[-5:] if len(rows) > 5 else rows[1:]  # без заголовка
+        
+        message = "📊 *Последние активации:*\n\n"
+        
+        for row in reversed(last_entries):  # показываем от новых к старым
+            if row[0] is None:  # пропускаем пустые
+                continue
+            name = row[2] or "—"
+            phone = row[3] or "—"
+            time = row[4].split()[0] if row[4] else "—"
+            message += f"👤 *{name}*\n📞 {phone}\n📅 {time}\n\n"
+        
+        total = len(rows) - 1
+        message += f"\n_📊 Всего активаций: {total}_\n"
+        message += f"_💾 Чтобы скачать полную таблицу, используй /get_excel_"
+        
+        await update.message.reply_text(message, parse_mode="Markdown")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка при чтении файла: {e}")
+
 async def handle_any_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текста вне диалога"""
     user_id = update.effective_user.id
@@ -321,7 +397,7 @@ def main():
     
     app = Application.builder().token(TOKEN).build()
     
-    # ConversationHandler для сбора данных (теперь 2 состояния)
+    # ConversationHandler для сбора данных
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(agree, pattern="agree")],
         states={
@@ -338,6 +414,8 @@ def main():
     )
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("get_excel", get_excel))
+    app.add_handler(CommandHandler("view_excel", view_excel))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(check_subscription, pattern="check_sub"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_any_text))
