@@ -127,8 +127,7 @@ async def agree(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "📋 Пожалуйста, введите ваши ИМЯ и ФАМИЛИЮ одним сообщением:\n\n"
         "Пример: Анна Иванова\n\n"
-        "Или: Анна\n\n"
-        "(если напишете только имя, фамилия останется пустой)"
+        
     )
     
     return WAITING_FOR_FULL_NAME
